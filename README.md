@@ -22,13 +22,14 @@ macOS has no built-in way to keep a clock or timer visible on top of everything.
 
 ### ⏱ A floating timer for yourself
 
-Click the **⏱** button on the clock and pick a time from **1 to 60 minutes**, or choose **Custom…** and type any duration (`7`, `2:30`, `1h 15m`, `90s`). The countdown replaces the clock, with the current time shown small underneath.
+Click the **⏱** button on the clock and pick a preset (**1, 3, 7, 13, 19, 23, 29, 37, 43 or 59 minutes**), or choose **Custom…** and type any duration (`25`, `2:30`, `1h 15m`, `90s`). The countdown replaces the clock, with the current time shown small underneath.
 
-- Double-click to **pause or resume**.
-- **Restart** or **stop** from the ⏱ menu.
-- When time is up, the window **flashes red and chimes**. Click it to dismiss.
+- **One-click pause:** while a timer runs, the ⏱ button becomes **⏸**. Click it to pause, then **▶** to resume. Double-clicking the clock works too.
+- **Minute chimes:** every time a full minute passes, a short bell chime plays, and **each minute gets a different three-note chime** (up to 60 unique ones), so you can tell how far along you are without looking. Chimes only play during a timer, never in plain clock mode. Turn them off with **Minute Chimes (Timer)** in the menu.
+- **Overtime stopwatch:** when time is up, the window **flashes red and chimes**, then counts up (`+0:12`, `+0:13`, …) so you can see exactly how long you've gone over. Click the clock or **■** to dismiss.
+- **Restart** or **stop** from the right-click menu.
 
-It works well as a **Pomodoro timer** (use the 25-minute preset), an exam-practice timer, a presentation timer or a break reminder.
+It works well as a **Pomodoro timer** (type `25` in **Custom…**), an exam-practice timer, a presentation timer or a break reminder.
 
 ### 🎨 Color-changing text that keeps catching your eye
 
@@ -55,6 +56,7 @@ SpaceClock is a **native macOS app**, written in Swift with Apple's AppKit. It i
 Good floating clocks and always-on-top timers are surprisingly hard to find for Mac. If you've been searching for any of these, this is for you:
 
 - floating clock for Mac / macOS desktop clock widget
+- timer with a sound every minute / interval chime timer for Mac
 - always-on-top timer for macOS
 - clock that stays visible in full-screen apps on Mac
 - countdown timer overlay for Mac
@@ -91,8 +93,9 @@ After that, open it anytime from Spotlight (**⌘ Space**, type **SpaceClock**).
 | Action | How |
 |---|---|
 | Start a timer | Click **⏱** on the clock and pick a time, or **Custom…** |
-| Pause / resume a timer | Double-click the clock |
-| Dismiss "Time's up!" | Click the clock |
+| Pause / resume a timer | Click **⏸** / **▶** on the clock, or double-click the clock |
+| Dismiss "Time's up!" | Click the clock or **■** |
+| Turn minute chimes on/off | Menu → **Minute Chimes (Timer)** |
 | Move the clock | Drag it from anywhere on its surface |
 | All settings | Right-click the clock, or click the 🕒 icon in the menu bar |
 | Turn color changes on/off | Menu → **Change Color Every 22s** |

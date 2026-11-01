@@ -26,6 +26,10 @@ enum Defaults {
         }
         set { store.set(newValue, forKey: "fontSize") }
     }
+    static var minuteChimes: Bool {
+        get { store.object(forKey: "minuteChimes") as? Bool ?? true }
+        set { store.set(newValue, forKey: "minuteChimes") }
+    }
     static var cycleColors: Bool {
         get { store.object(forKey: "cycleColors") as? Bool ?? true }
         set { store.set(newValue, forKey: "cycleColors") }
@@ -82,7 +86,7 @@ final class ClockView: NSView {
         timerButton.imagePosition = .imageOnly
         timerButton.contentTintColor = NSColor.white.withAlphaComponent(0.75)
         timerButton.target = self
-        timerButton.action = #selector(showTimerMenu)
+        timerButton.action = #selector(timerButtonPressed)
         timerButton.toolTip = "Set a timer"
 
         row.orientation = .horizontal
@@ -98,9 +102,28 @@ final class ClockView: NSView {
         applyStyle()
     }
 
-    @objc func showTimerMenu() {
-        guard let menu = (NSApp.delegate as? AppDelegate)?.quickTimerMenu() else { return }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: timerButton.bounds.height + 4), in: timerButton)
+    /// Opens the timer menu when no timer is set; otherwise pauses, resumes or dismisses.
+    @objc func timerButtonPressed() {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        switch delegate.countdown {
+        case .idle:
+            let menu = delegate.quickTimerMenu()
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: timerButton.bounds.height + 4), in: timerButton)
+        case .running, .paused:
+            delegate.togglePause()
+        case .finished:
+            delegate.stopTimer()
+        }
+    }
+
+    private var buttonSymbol = ""
+
+    private func setButtonSymbol(_ name: String, tip: String) {
+        guard name != buttonSymbol else { return }
+        buttonSymbol = name
+        let config = NSImage.SymbolConfiguration(pointSize: CGFloat(Defaults.fontSize) * 0.85, weight: .semibold)
+        timerButton.image = NSImage(systemSymbolName: name, accessibilityDescription: tip)?.withSymbolConfiguration(config)
+        timerButton.toolTip = tip
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -116,9 +139,7 @@ final class ClockView: NSView {
         dateLabel.font = .systemFont(ofSize: max(10, size * 0.4), weight: .medium)
         dateLabel.isHidden = !Defaults.showDate
         row.spacing = size * 0.35
-        let config = NSImage.SymbolConfiguration(pointSize: size * 0.85, weight: .semibold)
-        timerButton.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Set a timer")?
-            .withSymbolConfiguration(config)
+        buttonSymbol = "" // size may have changed; redraw the icon on the next update
     }
 
     enum Mode { case clock, running, paused, finished(flashOn: Bool) }
@@ -155,7 +176,8 @@ final class ClockView: NSView {
     }
 
     /// Shows the clock, or a countdown with the clock underneath when `countdown` is set.
-    func update(_ now: Date, countdown: String? = nil, mode: Mode = .clock) {
+    /// `note` is prefixed to the small clock line (e.g. "Paused", "Time's up!").
+    func update(_ now: Date, countdown: String? = nil, note: String? = nil, mode: Mode = .clock) {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         let hours = Defaults.use24Hour ? "HH" : "h"
@@ -171,7 +193,7 @@ final class ClockView: NSView {
         if let countdown {
             timeLabel.stringValue = countdown
             dateLabel.isHidden = false
-            dateLabel.stringValue = clock
+            dateLabel.stringValue = note.map { "\($0) · \(clock)" } ?? clock
             switch mode {
             case .paused:
                 textColor = NSColor.white.withAlphaComponent(0.5)
@@ -191,6 +213,12 @@ final class ClockView: NSView {
                 f.dateFormat = "EEE, d MMM"
                 dateLabel.stringValue = f.string(from: now)
             }
+        }
+        switch mode {
+        case .clock:    setButtonSymbol("timer", tip: "Set a timer")
+        case .running:  setButtonSymbol("pause.fill", tip: "Pause timer")
+        case .paused:   setButtonSymbol("play.fill", tip: "Resume timer")
+        case .finished: setButtonSymbol("stop.fill", tip: "Dismiss timer")
         }
         timeLabel.textColor = textColor
         timerButton.contentTintColor = textColor.withAlphaComponent(0.85)
@@ -215,6 +243,65 @@ final class ClockView: NSView {
         if (NSApp.delegate as? AppDelegate)?.handleClick(count: event.clickCount) != true {
             super.mouseDown(with: event)
         }
+    }
+}
+
+// MARK: - Minute chimes
+
+/// Synthesized bell chimes for the timer: a short three-note phrase, different for every minute,
+/// all at the same clear volume (the built-in macOS sounds vary too much in loudness).
+final class Chimes {
+    /// Three octaves of a major pentatonic scale from A4, so any combination sounds pleasant.
+    private static let scale: [Double] = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28, 31, 33]
+        .map { 440 * pow(2, $0 / 12) }
+    /// Melody shapes, as scale steps from the starting note. Each has a distinct up/down pattern.
+    private static let shapes: [[Int]] = [[0, 2, 4], [4, 2, 0], [0, 4, 2], [2, 0, 4], [0, 0, 4], [0, 3, 5]]
+    private static let sampleRate = 44_100.0
+
+    /// Kept so the sound isn't released while it's still playing.
+    private var current: NSSound?
+
+    /// Minute n starts on one of 10 notes and uses one of 6 shapes, giving 60 different chimes.
+    static func notes(minute: Int) -> [Double] {
+        let i = max(0, minute - 1)
+        let start = i % 10, shape = shapes[(i / 10) % shapes.count]
+        return shape.map { scale[start + $0] }
+    }
+
+    static func samples(minute: Int) -> [Float] {
+        let freqs = notes(minute: minute)
+        let gap = 0.16, ring = 0.7
+        var out = [Float](repeating: 0, count: Int(sampleRate * (gap * Double(freqs.count - 1) + ring)))
+        for (k, f) in freqs.enumerated() {
+            let first = Int(sampleRate * gap * Double(k))
+            for n in first..<out.count {
+                let t = Double(n - first) / sampleRate
+                // Bell-like: a few harmonics, a fast attack and an exponential fade.
+                let envelope = min(1, t / 0.005) * exp(-t * 6)
+                let tone = sin(2 * .pi * f * t) + 0.3 * sin(4 * .pi * f * t) + 0.1 * sin(6 * .pi * f * t)
+                out[n] += Float(0.22 * envelope * tone)
+            }
+        }
+        return out
+    }
+
+    /// 16-bit mono WAV file bytes, so the chime can be played with a plain NSSound.
+    static func wav(_ samples: [Float]) -> Data {
+        var data = Data()
+        func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
+        let rate = UInt32(sampleRate), bytes = UInt32(samples.count * 2)
+        data.append(contentsOf: Array("RIFF".utf8)); append(36 + bytes)
+        data.append(contentsOf: Array("WAVEfmt ".utf8)); append(UInt32(16)); append(UInt16(1)); append(UInt16(1))
+        append(rate); append(rate * 2); append(UInt16(2)); append(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); append(bytes)
+        for x in samples { append(Int16(max(-1, min(1, x)) * Float(Int16.max))) }
+        return data
+    }
+
+    func play(minute: Int) {
+        current?.stop()
+        current = NSSound(data: Self.wav(Self.samples(minute: minute)))
+        current?.play()
     }
 }
 
@@ -257,6 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var countdown: CountdownState = .idle
     var countdownTotal: TimeInterval = 0
     var lastChimeSecond = -1
+    var minutesChimed = 0
+    let chimes = Chimes()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel.contentView = clockView
@@ -299,9 +388,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .idle:
             clockView.update(now)
         case .running(let end):
-            clockView.update(now, countdown: format(end.timeIntervalSince(now)), mode: .running)
+            let remaining = end.timeIntervalSince(now)
+            chimeIfMinutePassed(remaining: remaining)
+            clockView.update(now, countdown: format(remaining), mode: .running)
         case .paused(let remaining):
-            clockView.update(now, countdown: "⏸ " + format(remaining), mode: .paused)
+            clockView.update(now, countdown: format(remaining), note: "Paused", mode: .paused)
         case .finished(let at):
             let elapsed = Int(now.timeIntervalSince(at))
             // Chime every 2 seconds for the first 10 seconds, then just keep flashing.
@@ -309,9 +400,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lastChimeSecond = elapsed
                 NSSound(named: "Glass")?.play()
             }
-            clockView.update(now, countdown: "Time's up!", mode: .finished(flashOn: elapsed % 2 == 0))
+            // Count up how long it's been since time ran out.
+            clockView.update(now, countdown: "+" + format(Double(elapsed)), note: "Time's up!",
+                             mode: .finished(flashOn: elapsed % 2 == 0))
         }
         resizeToFit()
+    }
+
+    /// Plays a different sound each time another full minute of the timer has gone by.
+    /// Skipped at the very end, where the "time's up" chime takes over.
+    func chimeIfMinutePassed(remaining: TimeInterval) {
+        let passed = Int((countdownTotal - remaining) / 60)
+        guard passed > minutesChimed else { return }
+        minutesChimed = passed
+        guard Defaults.minuteChimes, remaining > 1 else { return }
+        chimes.play(minute: passed)
     }
 
     /// Countdown text: rounds up so it reads 0:01 until the very end, never 0:00 early.
@@ -340,6 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func startTimer(_ seconds: TimeInterval) {
         countdownTotal = seconds
+        minutesChimed = 0
         countdown = .running(end: Date().addingTimeInterval(seconds))
         refresh()
     }
@@ -508,7 +612,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let timerMenu = NSMenu()
-        for minutes in [1.0, 2, 5, 10, 15, 20, 25, 30, 45, 60] {
+        for minutes in [1.0, 3, 7, 13, 19, 23, 29, 37, 43, 59] {
             let item = NSMenuItem(title: "\(Int(minutes)) min", action: #selector(startPreset(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = minutes
@@ -532,6 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggle("24-Hour Time", Defaults.use24Hour, #selector(toggle24h))
         toggle("Show Date", Defaults.showDate, #selector(toggleDate))
         toggle("Lock Position", Defaults.locked, #selector(toggleLock))
+        toggle("Minute Chimes (Timer)", Defaults.minuteChimes, #selector(toggleMinuteChimes))
         toggle("Change Color Every 22s", Defaults.cycleColors, #selector(toggleCycleColors))
         menu.addItem(.separator())
 
@@ -574,6 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func toggle24h() { Defaults.use24Hour.toggle(); refresh() }
     @objc func toggleDate() { Defaults.showDate.toggle(); refresh() }
     @objc func toggleLock() { Defaults.locked.toggle(); refresh() }
+    @objc func toggleMinuteChimes() { Defaults.minuteChimes.toggle(); refresh() }
     @objc func toggleCycleColors() { Defaults.cycleColors.toggle(); refresh() }
     @objc func resetPosition() { moveToTopRight() }
 
