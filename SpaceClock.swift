@@ -257,7 +257,7 @@ final class ClockView: NSView {
         }
         timeLabel.textColor = textColor
         timerButton.contentTintColor = textColor.withAlphaComponent(0.85)
-        layer?.backgroundColor = Defaults.showBackground ? background.cgColor : NSColor.clear.cgColor
+        layer?.backgroundColor = Defaults.showBackground ? background.cgColor : NSColor.black.withAlphaComponent(0.001).cgColor
         layer?.borderColor = Defaults.showBorder ? border.cgColor : NSColor.clear.cgColor
         layer?.borderWidth = Defaults.showBorder ? 1.5 : 0
         if !Defaults.showBorder { layer?.removeAnimation(forKey: "pulse") }
@@ -275,8 +275,25 @@ final class ClockView: NSView {
         (NSApp.delegate as? AppDelegate)?.buildMenu()
     }
 
+    // Make the entire clock rectangle draggable, even when its background is invisible.
+    // Keep the timer button interactive; labels and empty space belong to this view.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point) else { return nil }
+        let buttonPoint = timerButton.convert(point, from: self)
+        if !timerButton.isHidden && timerButton.bounds.contains(buttonPoint) {
+            return timerButton
+        }
+        return self
+    }
+
     override func mouseDown(with event: NSEvent) {
-        if (NSApp.delegate as? AppDelegate)?.handleClick(count: event.clickCount) != true {
+        if (NSApp.delegate as? AppDelegate)?.handleClick(count: event.clickCount) == true {
+            return
+        }
+        // Explicit window dragging works regardless of the layer's alpha.
+        if !Defaults.locked {
+            window?.performDrag(with: event)
+        } else {
             super.mouseDown(with: event)
         }
     }
@@ -387,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView = clockView
         panel.delegate = self
         panel.alphaValue = Defaults.opacity
-        panel.isMovableByWindowBackground = !Defaults.locked
+        panel.isMovableByWindowBackground = false // Dragging is handled by ClockView.
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "SpaceClock")
@@ -557,7 +574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         render(Date())
         resizeToFit()
         panel.alphaValue = Defaults.opacity
-        panel.isMovableByWindowBackground = !Defaults.locked
+        panel.isMovableByWindowBackground = false // Dragging is handled by ClockView.
         panel.level = Defaults.alwaysOnTop ? .screenSaver : .normal
         panel.hasShadow = Defaults.showBackground || Defaults.showBorder
         statusItem?.menu = buildMenu()
