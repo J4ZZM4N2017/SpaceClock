@@ -2,7 +2,7 @@
 
 *A floating clock and countdown timer for macOS, with a few extra options.*
 
-![SpaceClock with transparent background](screenshot.gif)
+![SpaceClock with transparent background](Screenshot.gif)
 
 ## Why this fork?
 
