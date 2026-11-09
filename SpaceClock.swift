@@ -26,6 +26,14 @@ enum Defaults {
         }
         set { store.set(newValue, forKey: "fontSize") }
     }
+    static var fontChoice: String {
+        get { store.string(forKey: "fontChoice") ?? "condensed" }
+        set { store.set(newValue, forKey: "fontChoice") }
+    }
+    static var customFontName: String {
+        get { store.string(forKey: "customFontName") ?? "" }
+        set { store.set(newValue, forKey: "customFontName") }
+    }
     static var minuteChimes: Bool {
         get { store.object(forKey: "minuteChimes") as? Bool ?? true }
         set { store.set(newValue, forKey: "minuteChimes") }
@@ -37,6 +45,18 @@ enum Defaults {
     static var opacity: Double {
         get { store.object(forKey: "opacity") as? Double ?? 0.85 }
         set { store.set(newValue, forKey: "opacity") }
+    }
+    static var showBackground: Bool {
+        get { store.object(forKey: "showBackground") as? Bool ?? true }
+        set { store.set(newValue, forKey: "showBackground") }
+    }
+    static var showBorder: Bool {
+        get { store.object(forKey: "showBorder") as? Bool ?? true }
+        set { store.set(newValue, forKey: "showBorder") }
+    }
+    static var alwaysOnTop: Bool {
+        get { store.object(forKey: "alwaysOnTop") as? Bool ?? true }
+        set { store.set(newValue, forKey: "alwaysOnTop") }
     }
     static var locked: Bool {
         get { store.bool(forKey: "locked") }
@@ -130,12 +150,27 @@ final class ClockView: NSView {
 
     func applyStyle() {
         let size = CGFloat(Defaults.fontSize)
-        let condensed = NSFont.systemFont(ofSize: size * 1.35, weight: .semibold, width: .condensed)
-        let monoDigits = condensed.fontDescriptor.addingAttributes([.featureSettings: [[
+        let pointSize = size * 1.35
+        let base: NSFont
+        switch Defaults.fontChoice {
+        case "monospaced":
+            base = NSFont.monospacedSystemFont(ofSize: pointSize, weight: .semibold)
+        case "rounded":
+            let descriptor = NSFont.systemFont(ofSize: pointSize, weight: .semibold)
+                .fontDescriptor.withDesign(.rounded)
+            base = descriptor.flatMap { NSFont(descriptor: $0, size: pointSize) }
+                ?? NSFont.systemFont(ofSize: pointSize, weight: .semibold)
+        case "custom":
+            base = NSFont(name: Defaults.customFontName, size: pointSize)
+                ?? NSFont.systemFont(ofSize: pointSize, weight: .semibold, width: .condensed)
+        default:
+            base = NSFont.systemFont(ofSize: pointSize, weight: .semibold, width: .condensed)
+        }
+        let tabular = base.fontDescriptor.addingAttributes([.featureSettings: [[
             NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
-            NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+            NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector
         ]]])
-        timeLabel.font = NSFont(descriptor: monoDigits, size: 0) ?? condensed
+        timeLabel.font = NSFont(descriptor: tabular, size: pointSize) ?? base
         dateLabel.font = .systemFont(ofSize: max(10, size * 0.4), weight: .medium)
         dateLabel.isHidden = !Defaults.showDate
         row.spacing = size * 0.35
@@ -160,7 +195,7 @@ final class ClockView: NSView {
         guard Defaults.cycleColors else { return Self.palette[0] }
         let index = Int(now.timeIntervalSince1970 / 22) % Self.palette.count
         if index != lastColorIndex {
-            if lastColorIndex != -1 { pulseBorder() }
+            if lastColorIndex != -1 && Defaults.showBorder { pulseBorder() }
             lastColorIndex = index
         }
         return Self.palette[index]
@@ -222,9 +257,10 @@ final class ClockView: NSView {
         }
         timeLabel.textColor = textColor
         timerButton.contentTintColor = textColor.withAlphaComponent(0.85)
-        layer?.backgroundColor = background.cgColor
-        layer?.borderColor = border.cgColor
-        layer?.borderWidth = 1.5
+        layer?.backgroundColor = Defaults.showBackground ? background.cgColor : NSColor.clear.cgColor
+        layer?.borderColor = Defaults.showBorder ? border.cgColor : NSColor.clear.cgColor
+        layer?.borderWidth = Defaults.showBorder ? 1.5 : 0
+        if !Defaults.showBorder { layer?.removeAnimation(forKey: "pulse") }
     }
 
     /// Size the window needs to fit the current text.
@@ -314,11 +350,11 @@ final class ClockPanel: NSPanel {
                    backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = Defaults.showBackground || Defaults.showBorder
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         // High level so it sits above full-screen apps and slideshows.
-        level = .screenSaver
+        level = Defaults.alwaysOnTop ? .screenSaver : .normal
         // Follow every Space (three-finger swipe) and appear over full-screen apps.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     }
@@ -522,6 +558,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         resizeToFit()
         panel.alphaValue = Defaults.opacity
         panel.isMovableByWindowBackground = !Defaults.locked
+        panel.level = Defaults.alwaysOnTop ? .screenSaver : .normal
+        panel.hasShadow = Defaults.showBackground || Defaults.showBorder
         statusItem?.menu = buildMenu()
     }
 
@@ -636,24 +674,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         toggle("24-Hour Time", Defaults.use24Hour, #selector(toggle24h))
         toggle("Show Date", Defaults.showDate, #selector(toggleDate))
         toggle("Lock Position", Defaults.locked, #selector(toggleLock))
+        toggle("Always on Top", Defaults.alwaysOnTop, #selector(toggleAlwaysOnTop))
+        toggle("Show Background", Defaults.showBackground, #selector(toggleBackground))
+        toggle("Show Border", Defaults.showBorder, #selector(toggleBorder))
         toggle("Minute Chimes (Timer)", Defaults.minuteChimes, #selector(toggleMinuteChimes))
         toggle("Change Color Every 22s", Defaults.cycleColors, #selector(toggleCycleColors))
         menu.addItem(.separator())
 
         let sizeMenu = NSMenu()
-        for (name, value) in [("Small", 24.0), ("Medium", 36.0), ("Large", 52.0), ("Huge", 72.0)] {
+        for (name, value) in [("Small", 24.0), ("Medium", 36.0), ("Large", 52.0), ("Huge", 72.0), ("Giant", 100.0), ("Massive", 140.0)] {
             let item = NSMenuItem(title: name, action: #selector(setSize(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = value
             item.state = Defaults.fontSize == value ? .on : .off
             sizeMenu.addItem(item)
         }
+        sizeMenu.addItem(.separator())
+        action("Custom Size…", #selector(customSize), in: sizeMenu)
         let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
 
+        let fontMenu = NSMenu()
+        for (title, key) in [("System Condensed", "condensed"),
+                             ("System Monospaced", "monospaced"),
+                             ("System Rounded", "rounded")] {
+            let item = NSMenuItem(title: title, action: #selector(setFont(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            item.state = Defaults.fontChoice == key ? .on : .off
+            fontMenu.addItem(item)
+        }
+        fontMenu.addItem(.separator())
+        let customFont = NSMenuItem(title: "Custom Font…", action: #selector(chooseCustomFont), keyEquivalent: "")
+        customFont.target = self
+        customFont.state = Defaults.fontChoice == "custom" ? .on : .off
+        fontMenu.addItem(customFont)
+        let fontItem = NSMenuItem(title: "Font", action: nil, keyEquivalent: "")
+        fontItem.submenu = fontMenu
+        menu.addItem(fontItem)
+
         let opacityMenu = NSMenu()
-        for value in [1.0, 0.85, 0.6, 0.4] {
+        for percent in stride(from: 100, through: 10, by: -10) {
+            let value = Double(percent) / 100.0
             let item = NSMenuItem(title: "\(Int(value * 100))%", action: #selector(setOpacity(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = value
@@ -679,12 +742,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func toggle24h() { Defaults.use24Hour.toggle(); refresh() }
     @objc func toggleDate() { Defaults.showDate.toggle(); refresh() }
     @objc func toggleLock() { Defaults.locked.toggle(); refresh() }
+    @objc func toggleAlwaysOnTop() { Defaults.alwaysOnTop.toggle(); refresh() }
+    @objc func toggleBackground() { Defaults.showBackground.toggle(); refresh() }
+    @objc func toggleBorder() { Defaults.showBorder.toggle(); refresh() }
     @objc func toggleMinuteChimes() { Defaults.minuteChimes.toggle(); refresh() }
     @objc func toggleCycleColors() { Defaults.cycleColors.toggle(); refresh() }
     @objc func resetPosition() { moveToTopRight() }
 
     @objc func setSize(_ sender: NSMenuItem) {
         if let v = sender.representedObject as? Double { Defaults.fontSize = v; refresh() }
+    }
+
+    @objc func customSize() {
+        let alert = NSAlert()
+        alert.messageText = "Custom Clock Size"
+        alert.informativeText = "Enter the base font size in points (12–300)."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
+        field.stringValue = String(format: "%g", Defaults.fontSize)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let value = Double(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              value.isFinite, (12...300).contains(value) else {
+            NSSound.beep()
+            return
+        }
+        Defaults.fontSize = value
+        refresh()
+    }
+
+    @objc func setFont(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? String else { return }
+        Defaults.fontChoice = choice
+        refresh()
+    }
+
+    @objc func chooseCustomFont() {
+        let manager = NSFontManager.shared
+        let current = NSFont(name: Defaults.customFontName, size: CGFloat(Defaults.fontSize) * 1.35)
+            ?? NSFont.systemFont(ofSize: CGFloat(Defaults.fontSize) * 1.35)
+        manager.setSelectedFont(current, isMultiple: false)
+        manager.target = self
+        manager.action = #selector(changeFont(_:))
+        manager.orderFrontFontPanel(self)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func changeFont(_ sender: NSFontManager) {
+        let current = NSFont(name: Defaults.customFontName, size: CGFloat(Defaults.fontSize) * 1.35)
+            ?? NSFont.systemFont(ofSize: CGFloat(Defaults.fontSize) * 1.35)
+        let selected = sender.convert(current)
+        Defaults.customFontName = selected.fontName
+        Defaults.fontChoice = "custom"
+        refresh()
     }
 
     @objc func setOpacity(_ sender: NSMenuItem) {
