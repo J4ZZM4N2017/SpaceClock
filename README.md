@@ -2,6 +2,8 @@
 
 *A floating clock and countdown timer for macOS, with a few extra options.*
 
+![SpaceClock with transparent background](screenshot.gif)
+
 ## Why this fork?
 
 The [original SpaceClock](https://github.com/dsatyam09/SpaceClock) by [dsatyam09](https://github.com/dsatyam09) is a cute, simple little app. It does exactly what it promises: puts a clock or countdown timer on your Mac, keeps it visible across Spaces, and stays out of your way.
